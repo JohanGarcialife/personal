@@ -1,0 +1,261 @@
+import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { BinanceService } from '../binance/binance.service';
+import { GeminiService } from '../gemini/gemini.service';
+import { RiskService } from '../risk/risk.service';
+import { SupabaseService } from '../supabase/supabase.service';
+import { RSI, EMA, MACD } from 'technicalindicators';
+
+@Injectable()
+export class StrategyService implements OnModuleInit {
+  private readonly logger = new Logger(StrategyService.name);
+  private intervalId: NodeJS.Timeout;
+
+  constructor(
+    private readonly binanceService: BinanceService,
+    private readonly geminiService: GeminiService,
+    private readonly riskService: RiskService,
+    private readonly supabaseService: SupabaseService,
+  ) {}
+
+  onModuleInit() {
+    this.logger.log('Inicializando ciclo de ejecución automatizado de la Estrategia...');
+    
+    // Ejecutar un ciclo inicial a los 10 segundos del arranque
+    setTimeout(() => {
+      this.executeCycle().catch((err) => {
+        this.logger.error('Error durante la ejecución del ciclo inicial de estrategia', err.stack);
+      });
+    }, 10000);
+
+    // Ejecutar el ciclo de análisis cada 5 minutos (300,000 ms)
+    this.intervalId = setInterval(() => {
+      this.executeCycle().catch((err) => {
+        this.logger.error('Error durante la ejecución del ciclo periódico de estrategia', err.stack);
+      });
+    }, 300000);
+  }
+
+  /**
+   * Ejecuta un ciclo completo de análisis, consulta a la IA y trading de simulación
+   */
+  async executeCycle(): Promise<void> {
+    this.logger.log('--- Iniciando Ciclo de Trading Automatizado ---');
+
+    // 1. Obtener configuraciones dinámicas desde Supabase
+    const settings = await this.supabaseService.getSettings();
+    if (!settings) {
+      this.logger.warn('No se pudo cargar la configuración de Supabase. Omitiendo ciclo.');
+      return;
+    }
+
+    // Verificar Kill Switch
+    if (!settings.is_active) {
+      this.logger.log('El Bot está desactivado (Kill Switch = Off). Omitiendo ciclo.');
+      return;
+    }
+
+    const {
+      allowed_symbols: allowedSymbols,
+      max_risk_per_trade_percent: maxRiskPerTradePercent,
+      max_margin_usage_percent: maxMarginUsagePercent,
+      min_risk_to_reward_ratio: minRiskToRewardRatio,
+      max_leverage: maxLeverage,
+      prompt_master: promptMaster,
+    } = settings;
+
+    // 2. Consultar balance disponible en Binance Futures Demo
+    let balance: { total: number; free: number };
+    try {
+      balance = await this.binanceService.getBalance();
+      this.logger.log(`Balance obtenido: Total = ${balance.total} USDT | Libre = ${balance.free} USDT`);
+    } catch (error) {
+      this.logger.error('Error al consultar balance. Cancelando ciclo.', error.stack);
+      return;
+    }
+
+    // 3. Consultar posiciones abiertas actuales en Binance
+    let openPositions: any[] = [];
+    try {
+      openPositions = await this.binanceService.getOpenPositions();
+      this.logger.log(`Posiciones abiertas actuales: ${openPositions.length}`);
+    } catch (error) {
+      this.logger.error('Error al obtener posiciones abiertas. Cancelando ciclo.', error.stack);
+      return;
+    }
+
+    // 4. Analizar cada símbolo permitido
+    for (const symbol of allowedSymbols) {
+      try {
+        this.logger.log(`[${symbol}] Analizando par...`);
+
+        // Comprobar si ya existe una posición abierta para este par
+        const hasPosition = openPositions.some((pos) => {
+          const posSymbol = pos.symbol;
+          // Compara símbolos normalizados (ej: BTC/USDT:USDT vs BTC/USDT)
+          return posSymbol === symbol || posSymbol.startsWith(symbol + ':');
+        });
+
+        if (hasPosition) {
+          this.logger.log(`[${symbol}] Ya existe una posición abierta. Omitiendo nueva entrada.`);
+          continue;
+        }
+
+        // Obtener velas (klines) - 50 velas de 15 minutos
+        const klines = await this.binanceService.getKlines(symbol, '15m', 50);
+        if (klines.length < 30) {
+          this.logger.warn(`[${symbol}] No hay suficientes velas para calcular indicadores (${klines.length}).`);
+          continue;
+        }
+
+        // Extraer precios de cierre
+        const closePrices = klines.map((k) => parseFloat(k[4]?.toString() || '0'));
+        const currentPrice = closePrices[closePrices.length - 1] || 0;
+
+        // Calcular indicadores técnicos
+        const rsiValues = RSI.calculate({ values: closePrices, period: 14 });
+        const currentRsi = rsiValues[rsiValues.length - 1] || 50;
+
+        const ema20Values = EMA.calculate({ values: closePrices, period: 20 });
+        const currentEma20 = ema20Values[ema20Values.length - 1] || currentPrice;
+
+        const ema50Values = EMA.calculate({ values: closePrices, period: 50 });
+        const currentEma50 = ema50Values[ema50Values.length - 1] || currentPrice;
+
+        const macdValues = MACD.calculate({
+          values: closePrices,
+          fastPeriod: 12,
+          slowPeriod: 26,
+          signalPeriod: 9,
+          SimpleMAOscillator: false,
+          SimpleMASignal: false,
+        });
+        const currentMacdInfo = macdValues[macdValues.length - 1] || { MACD: 0, signal: 0, histogram: 0 };
+
+        const indicators = {
+          rsi: parseFloat(currentRsi.toFixed(2)),
+          ema20: parseFloat(currentEma20.toFixed(2)),
+          ema50: parseFloat(currentEma50.toFixed(2)),
+          macd: {
+            macd: parseFloat((currentMacdInfo.MACD || 0).toFixed(4)),
+            signal: parseFloat((currentMacdInfo.signal || 0).toFixed(4)),
+            histogram: parseFloat((currentMacdInfo.histogram || 0).toFixed(4)),
+          },
+        };
+
+        // 5. Formar el contexto técnico para Gemini
+        const recentKlinesData = klines.slice(-5).map((k) => [
+          k[0] ?? 0, // timestamp
+          parseFloat(k[1]?.toString() || '0'), // open
+          parseFloat(k[2]?.toString() || '0'), // high
+          parseFloat(k[3]?.toString() || '0'), // low
+          parseFloat(k[4]?.toString() || '0'), // close
+          parseFloat(k[5]?.toString() || '0'), // volume
+        ]);
+
+        const marketContext = {
+          price: currentPrice,
+          balance: balance.total,
+          indicators,
+          recentKlines: recentKlinesData,
+        };
+
+        // 6. Consultar decisión de la IA (Gemini 3.5 Flash)
+        const startTime = Date.now();
+        this.logger.log(`[${symbol}] Enviando análisis técnico a Gemini...`);
+        
+        const iaResponse = await this.geminiService.analyzeMarket(symbol, marketContext, promptMaster);
+        const latency = Date.now() - startTime;
+
+        this.logger.log(`[${symbol}] Respuesta recibida de Gemini. Decisión: ${iaResponse.decision} en ${latency}ms`);
+
+        // Registrar respuesta de la IA en Supabase
+        await this.supabaseService.logGeminiDecision(
+          symbol,
+          marketContext,
+          iaResponse.decision,
+          iaResponse,
+          latency,
+        );
+
+        // 7. Evaluar decisión
+        if (iaResponse.decision !== 'OPEN_LONG' && iaResponse.decision !== 'OPEN_SHORT') {
+          this.logger.log(`[${symbol}] La IA decidió HOLD o no operar. Fin del análisis.`);
+          continue;
+        }
+
+        const side: 'buy' | 'sell' = iaResponse.decision === 'OPEN_LONG' ? 'buy' : 'sell';
+
+        // 8. Filtrar propuesta por el Motor de Riesgos
+        const riskValidation = this.riskService.validateTradeProposal(
+          symbol,
+          side,
+          {
+            leverage: iaResponse.leverage,
+            entryPriceTarget: iaResponse.entryPriceTarget,
+            stopLoss: iaResponse.stopLoss,
+            takeProfit: iaResponse.takeProfit,
+          },
+          balance,
+          {
+            allowedSymbols,
+            maxLeverage,
+            maxRiskPerTradePercent: parseFloat(maxRiskPerTradePercent.toString()),
+            maxMarginUsagePercent: parseFloat(maxMarginUsagePercent.toString()),
+            minRiskToRewardRatio: parseFloat(minRiskToRewardRatio.toString()),
+          },
+        );
+
+        if (!riskValidation.isValid) {
+          this.logger.warn(`[${symbol}] Operación RECHAZADA por el Motor de Riesgos. Razón: ${riskValidation.reason}`);
+          continue;
+        }
+
+        // 9. Ejecutar la operación en Binance Futures Demo
+        const { calculatedAmount, calculatedLeverage } = riskValidation;
+        this.logger.log(`[${symbol}] Operación APROBADA. Ejecutando: ${side.toUpperCase()} | Cantidad: ${calculatedAmount} | Apalancamiento: ${calculatedLeverage}x`);
+
+        // Configurar apalancamiento y tipo de margen
+        await this.binanceService.setMarginMode(symbol, 'isolated');
+        await this.binanceService.setLeverage(symbol, calculatedLeverage!);
+
+        // Cancelar órdenes abiertas previas en el símbolo para evitar conflictos
+        await this.binanceService.cancelAllOrders(symbol);
+
+        // Colocar orden de mercado de entrada
+        const entryOrder = await this.binanceService.openMarketPosition(symbol, side, calculatedAmount!);
+        this.logger.log(`[${symbol}] Orden de mercado colocada exitosamente. ID: ${entryOrder.id}`);
+
+        // Colocar órdenes condicionales de salida (Stop Loss y Take Profit)
+        const exitOrders = await this.binanceService.setExitOrders(
+          symbol,
+          side,
+          iaResponse.stopLoss,
+          iaResponse.takeProfit,
+        );
+        this.logger.log(`[${symbol}] Órdenes de SL (${iaResponse.stopLoss}) y TP (${iaResponse.takeProfit}) colocadas.`);
+
+        // 10. Registrar la transacción en Supabase
+        await this.supabaseService.logTradeOpen(
+          symbol,
+          side,
+          iaResponse.entryPriceTarget,
+          calculatedAmount!,
+          calculatedLeverage!,
+          iaResponse.stopLoss,
+          iaResponse.takeProfit,
+          entryOrder.id,
+        );
+
+        this.logger.log(`[${symbol}] Ciclo de trade ejecutado y guardado en base de datos con éxito.`);
+
+      } catch (error) {
+        this.logger.error(`Error procesando ciclo de trading para ${symbol}`, error.stack);
+      }
+
+      // Pausa de 3 segundos entre símbolos para evitar saturar la cuota (rate limit) de Gemini Free Tier
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+
+    this.logger.log('--- Fin del Ciclo de Trading ---');
+  }
+}
