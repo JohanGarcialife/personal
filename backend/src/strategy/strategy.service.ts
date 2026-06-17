@@ -27,12 +27,12 @@ export class StrategyService implements OnModuleInit {
       });
     }, 10000);
 
-    // Ejecutar el ciclo de análisis cada 5 minutos (300,000 ms)
+    // Ejecutar el ciclo de análisis cada 1 hora (3,600,000 ms) para coincidir con la temporalidad de velas de 1h
     this.intervalId = setInterval(() => {
       this.executeCycle().catch((err) => {
         this.logger.error('Error durante la ejecución del ciclo periódico de estrategia', err.stack);
       });
-    }, 300000);
+    }, 3600000);
   }
 
   /**
@@ -100,8 +100,8 @@ export class StrategyService implements OnModuleInit {
           continue;
         }
 
-        // Obtener velas (klines) - 50 velas de 15 minutos
-        const klines = await this.binanceService.getKlines(symbol, '15m', 50);
+        // Obtener velas (klines) - 50 velas de 1 hora
+        const klines = await this.binanceService.getKlines(symbol, '1h', 50);
         if (klines.length < 30) {
           this.logger.warn(`[${symbol}] No hay suficientes velas para calcular indicadores (${klines.length}).`);
           continue;

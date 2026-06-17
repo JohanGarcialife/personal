@@ -41,7 +41,7 @@ let StrategyService = StrategyService_1 = class StrategyService {
             this.executeCycle().catch((err) => {
                 this.logger.error('Error durante la ejecución del ciclo periódico de estrategia', err.stack);
             });
-        }, 300000);
+        }, 3600000);
     }
     async executeCycle() {
         this.logger.log('--- Iniciando Ciclo de Trading Automatizado ---');
@@ -84,7 +84,7 @@ let StrategyService = StrategyService_1 = class StrategyService {
                     this.logger.log(`[${symbol}] Ya existe una posición abierta. Omitiendo nueva entrada.`);
                     continue;
                 }
-                const klines = await this.binanceService.getKlines(symbol, '15m', 50);
+                const klines = await this.binanceService.getKlines(symbol, '1h', 50);
                 if (klines.length < 30) {
                     this.logger.warn(`[${symbol}] No hay suficientes velas para calcular indicadores (${klines.length}).`);
                     continue;
