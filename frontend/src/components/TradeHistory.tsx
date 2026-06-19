@@ -51,6 +51,11 @@ export default function TradeHistory() {
 
     fetchHistory();
 
+    // Polling fallback cada 15 segundos en caso de que Realtime de Supabase falle
+    const interval = setInterval(() => {
+      fetchHistory();
+    }, 15000);
+
     // Suscripción en tiempo real para trade_logs
     const channel = supabase
       .channel('realtime_trade_history')
@@ -72,6 +77,7 @@ export default function TradeHistory() {
       .subscribe();
 
     return () => {
+      clearInterval(interval);
       supabase.removeChannel(channel);
     };
   }, []);

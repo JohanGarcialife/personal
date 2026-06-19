@@ -169,56 +169,78 @@ Analiza los datos y toma la decisión de trading. Genera tu respuesta estructura
         },
       };
 
-      this.logger.log(`Enviando consulta HTTP directa a Gemini Flash (${modelName}) para ${symbol}...`);
+      const modelsToTry = [this.flashModelName];
+      if (!modelsToTry.includes('gemini-2.5-flash')) {
+        modelsToTry.push('gemini-2.5-flash');
+      }
+      if (!modelsToTry.includes('gemini-2.0-flash')) {
+        modelsToTry.push('gemini-2.0-flash');
+      }
 
-      let attempts = 0;
-      const maxAttempts = 3;
-      const baseDelayMs = 2000;
+      this.logger.log(`Modelos a intentar en orden de fallback: ${modelsToTry.join(', ')}`);
 
-      while (attempts < maxAttempts) {
-        try {
-          attempts++;
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(body),
-          });
+      let lastError: Error | null = null;
 
-          if (!response.ok) {
-            const errText = await response.text();
-            if ((response.status === 503 || response.status === 429) && attempts < maxAttempts) {
-              const delay = baseDelayMs * attempts;
-              this.logger.warn(`Gemini API retornó error ${response.status} para ${symbol}. Reintentando en ${delay}ms (Intento ${attempts}/${maxAttempts})...`);
-              await new Promise((resolve) => setTimeout(resolve, delay));
-              continue;
+      for (const modelName of modelsToTry) {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${this.apiKey}`;
+        let attempts = 0;
+        const maxAttempts = 2; // Intentar 2 veces por cada modelo
+        const baseDelayMs = 1500;
+
+        this.logger.log(`Enviando consulta HTTP a Gemini Flash (${modelName}) para ${symbol}...`);
+
+        while (attempts < maxAttempts) {
+          try {
+            attempts++;
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(body),
+            });
+
+            if (!response.ok) {
+              const errText = await response.text();
+              if (response.status === 503 || response.status === 429) {
+                if (attempts < maxAttempts) {
+                  const delay = baseDelayMs * attempts;
+                  this.logger.warn(`Gemini (${modelName}) retornó error ${response.status} para ${symbol}. Reintentando en ${delay}ms (Intento ${attempts}/${maxAttempts})...`);
+                  await new Promise((resolve) => setTimeout(resolve, delay));
+                  continue;
+                }
+                throw new Error(`Modelo ${modelName} sobrecargado/limitado (HTTP ${response.status})`);
+              }
+              throw new Error(`Error de API de Gemini HTTP (${response.status}): ${errText}`);
             }
-            throw new Error(`Error de API de Gemini HTTP (${response.status}): ${errText}`);
-          }
 
-          const resJson = await response.json();
-          const responseText = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
+            const resJson = await response.json();
+            const responseText = resJson.candidates?.[0]?.content?.parts?.[0]?.text;
 
-          if (!responseText) {
-            throw new Error('Gemini retornó una estructura de respuesta inesperada o vacía.');
-          }
+            if (!responseText) {
+              throw new Error('Gemini retornó una estructura de respuesta inesperada o vacía.');
+            }
 
-          this.logger.debug(`Respuesta de Gemini recibida por HTTP: ${responseText}`);
-          
-          const decision: TradingDecision = JSON.parse(responseText.trim());
-          return decision;
-        } catch (error) {
-          if (attempts >= maxAttempts) {
-            this.logger.error(`Error al analizar mercado con Gemini Flash (HTTP) para ${symbol} tras ${maxAttempts} intentos`, error.stack);
-            throw error;
+            this.logger.log(`¡Éxito con modelo ${modelName}! Respuesta de Gemini recibida por HTTP.`);
+            this.logger.debug(`Respuesta de Gemini recibida por HTTP: ${responseText}`);
+            
+            const decision: TradingDecision = JSON.parse(responseText.trim());
+            return decision;
+          } catch (error) {
+            lastError = error;
+            if (attempts < maxAttempts) {
+              const delay = baseDelayMs * attempts;
+              this.logger.warn(`Error en ${modelName} para ${symbol} (Intento ${attempts}/${maxAttempts}): ${error.message}. Reintentando en ${delay}ms...`);
+              await new Promise((resolve) => setTimeout(resolve, delay));
+            } else {
+              this.logger.warn(`Fallo definitivo para el modelo ${modelName}: ${error.message}. Pasando al siguiente modelo si está disponible...`);
+            }
           }
-          const delay = baseDelayMs * attempts;
-          this.logger.warn(`Error de red/petición en análisis de ${symbol} (Intento ${attempts}/${maxAttempts}): ${error.message}. Reintentando en ${delay}ms...`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
-      throw new Error(`Fallo el análisis de ${symbol} tras superar el límite de reintentos.`);
+
+      this.logger.error(`Todos los modelos de Gemini fallaron para ${symbol}. Último error:`, lastError?.stack);
+      throw new Error(`Fallo el análisis de ${symbol} tras intentar todos los modelos de fallback. Último error: ${lastError?.message}`);
     } catch (error) {
       throw error;
     }

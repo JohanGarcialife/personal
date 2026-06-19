@@ -135,6 +135,11 @@ export default function PerformanceStats({ totalBalance }: { totalBalance: numbe
 
     loadTrades();
 
+    // Polling fallback cada 15 segundos en caso de que Realtime de Supabase falle
+    const interval = setInterval(() => {
+      loadTrades();
+    }, 15000);
+
     // Suscripción real-time para actualizar las estadísticas al instante si un trade se cierra
     const channel = supabase
       .channel('realtime_perf_stats')
@@ -155,6 +160,7 @@ export default function PerformanceStats({ totalBalance }: { totalBalance: numbe
       .subscribe();
 
     return () => {
+      clearInterval(interval);
       supabase.removeChannel(channel);
     };
   }, [totalBalance]);

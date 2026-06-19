@@ -62,6 +62,11 @@ export default function GeminiLogs() {
 
     fetchLogs();
 
+    // Polling fallback cada 15 segundos en caso de que Realtime de Supabase falle
+    const interval = setInterval(() => {
+      fetchLogs();
+    }, 15000);
+
     // Suscripción en tiempo real a nuevas decisiones de Gemini
     const channel = supabase
       .channel('realtime_gemini_logs')
@@ -71,6 +76,10 @@ export default function GeminiLogs() {
         (payload: any) => {
           if (payload.new) {
             setLogs((prevLogs) => {
+              // Evitar duplicar si el polling ya lo cargó
+              if (prevLogs.some((l) => l.id === payload.new.id)) {
+                return prevLogs;
+              }
               const updated = [payload.new as GeminiLog, ...prevLogs];
               return updated.slice(0, 10); // Mantener solo los últimos 10
             });
@@ -80,6 +89,7 @@ export default function GeminiLogs() {
       .subscribe();
 
     return () => {
+      clearInterval(interval);
       supabase.removeChannel(channel);
     };
   }, []);
