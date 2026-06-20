@@ -12,5 +12,6 @@ export declare class StrategyService implements OnModuleInit {
     private intervalId;
     constructor(binanceService: BinanceService, geminiService: GeminiService, riskService: RiskService, supabaseService: SupabaseService);
     onModuleInit(): void;
+    private scheduleNextHourlyCycle;
     executeCycle(): Promise<void>;
 }

@@ -37,11 +37,24 @@ let StrategyService = StrategyService_1 = class StrategyService {
                 this.logger.error('Error durante la ejecución del ciclo inicial de estrategia', err.stack);
             });
         }, 10000);
-        this.intervalId = setInterval(() => {
+        this.scheduleNextHourlyCycle();
+    }
+    scheduleNextHourlyCycle() {
+        const now = new Date();
+        const msInHour = 3600000;
+        const msPassedInCurrentHour = (now.getMinutes() * 60 * 1000) +
+            (now.getSeconds() * 1000) +
+            now.getMilliseconds();
+        const msUntilNextHour = msInHour - msPassedInCurrentHour;
+        const targetHour = (now.getHours() + 1) % 24;
+        const targetHourFormatted = targetHour.toString().padStart(2, '0');
+        this.logger.log(`Próximo ciclo periódico programado en ${Math.round(msUntilNextHour / 1000 / 60)} minutos (exactamente a las ${targetHourFormatted}:00:00)`);
+        this.intervalId = setTimeout(() => {
             this.executeCycle().catch((err) => {
                 this.logger.error('Error durante la ejecución del ciclo periódico de estrategia', err.stack);
             });
-        }, 3600000);
+            this.scheduleNextHourlyCycle();
+        }, msUntilNextHour);
     }
     async executeCycle() {
         this.logger.log('--- Iniciando Ciclo de Trading Automatizado ---');

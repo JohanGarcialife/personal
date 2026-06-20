@@ -27,12 +27,40 @@ export class StrategyService implements OnModuleInit {
       });
     }, 10000);
 
-    // Ejecutar el ciclo de análisis cada 1 hora (3,600,000 ms) para coincidir con la temporalidad de velas de 1h
-    this.intervalId = setInterval(() => {
+    // Programar el ciclo periódico al inicio de la siguiente hora
+    this.scheduleNextHourlyCycle();
+  }
+
+  /**
+   * Calcula el tiempo restante hasta la próxima hora en punto y programa el siguiente ciclo.
+   * Auto-corrige cualquier desfase temporal en cada iteración de manera recursiva.
+   */
+  private scheduleNextHourlyCycle() {
+    const now = new Date();
+    const msInHour = 3600000;
+    
+    const msPassedInCurrentHour = 
+      (now.getMinutes() * 60 * 1000) + 
+      (now.getSeconds() * 1000) + 
+      now.getMilliseconds();
+      
+    const msUntilNextHour = msInHour - msPassedInCurrentHour;
+    
+    const targetHour = (now.getHours() + 1) % 24;
+    const targetHourFormatted = targetHour.toString().padStart(2, '0');
+    
+    this.logger.log(
+      `Próximo ciclo periódico programado en ${Math.round(msUntilNextHour / 1000 / 60)} minutos (exactamente a las ${targetHourFormatted}:00:00)`
+    );
+
+    this.intervalId = setTimeout(() => {
       this.executeCycle().catch((err) => {
         this.logger.error('Error durante la ejecución del ciclo periódico de estrategia', err.stack);
       });
-    }, 3600000);
+
+      // Programar recursivamente la siguiente hora
+      this.scheduleNextHourlyCycle();
+    }, msUntilNextHour);
   }
 
   /**
