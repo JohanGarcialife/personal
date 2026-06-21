@@ -103,21 +103,32 @@ export class StrategyService implements OnModuleInit {
           const binanceTrades = await this.binanceService.getClient().fetchMyTrades(resolvedSymbol, undefined, 20);
           
           const tradeCreatedAt = new Date(dbTrade.created_at).getTime();
-          const closingTrades = binanceTrades.filter((t) => {
-            const tTime = t.timestamp || 0;
-            const pnl = parseFloat(t.info?.realizedPnl || '0');
-            // Trades posteriores a la apertura con PNL realizado no nulo
-            return tTime >= (tradeCreatedAt - 60000) && pnl !== 0;
-          });
+          // Ordenar trades por timestamp ascendente
+          const sortedTrades = binanceTrades
+            .filter((t) => (t.timestamp || 0) >= (tradeCreatedAt - 60000))
+            .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
 
-          if (closingTrades.length > 0) {
+          // Encontrar el primer trade que reporta PNL realizado (el inicio del cierre de esta posición)
+          const firstCloseIndex = sortedTrades.findIndex((t) => parseFloat(t.info?.realizedPnl || '0') !== 0);
+
+          if (firstCloseIndex !== -1) {
+            const firstCloseTrade = sortedTrades[firstCloseIndex];
+            const firstCloseTime = firstCloseTrade.timestamp || 0;
+
+            // Agrupar todos los trades de cierre que ocurrieron en una ventana de 10 segundos
+            const closingTrades = sortedTrades.filter((t) => {
+              const tTime = t.timestamp || 0;
+              const pnl = parseFloat(t.info?.realizedPnl || '0');
+              return Math.abs(tTime - firstCloseTime) <= 10000 && pnl !== 0;
+            });
+
             let totalPnL = 0;
-            let lastClosedAt: number | null = null;
+            let lastClosedAt = firstCloseTime;
 
             for (const ct of closingTrades) {
               totalPnL += parseFloat(ct.info?.realizedPnl || '0');
               const ctTime = ct.timestamp || 0;
-              if (!lastClosedAt || ctTime > lastClosedAt) {
+              if (ctTime > lastClosedAt) {
                 lastClosedAt = ctTime;
               }
             }
@@ -130,13 +141,11 @@ export class StrategyService implements OnModuleInit {
               'LIMIT_OR_STOP_ORDER'
             );
 
-            // Actualizar la fecha de cierre exacta si la tenemos
-            if (lastClosedAt) {
-              await this.supabaseService.getClient()
-                .from('trade_logs')
-                .update({ closed_at: new Date(lastClosedAt).toISOString() })
-                .eq('id', dbTrade.id);
-            }
+            // Actualizar la fecha de cierre exacta
+            await this.supabaseService.getClient()
+              .from('trade_logs')
+              .update({ closed_at: new Date(lastClosedAt).toISOString() })
+              .eq('id', dbTrade.id);
 
             this.logger.log(`[${cleanSymbol}] Posición sincronizada como CERRADA con PNL: ${totalPnL} USDT.`);
           } else {
