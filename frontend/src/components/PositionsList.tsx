@@ -96,10 +96,11 @@ export default function PositionsList({ positions, onRefreshPositions, isLoading
                 <th className="py-3 px-2">Tipo</th>
                 <th className="py-3 px-2 text-right">Tamaño</th>
                 <th className="py-3 px-2 text-right">Entrada</th>
-                <th className="py-3 px-2 text-right">Stop Loss (SL)</th>
-                <th className="py-3 px-2 text-right">Take Profit (TP)</th>
+                <th className="py-3 px-2 text-right">Apalancam.</th>
+                <th className="py-3 px-2 text-right">Margen (USDT)</th>
+                <th className="py-3 px-2 text-right">Stop Loss</th>
+                <th className="py-3 px-2 text-right">Take Profit</th>
                 <th className="py-3 px-2 text-right">Precio Marca</th>
-                <th className="py-3 px-2 text-right">Margen</th>
                 <th className="py-3 px-2 text-right font-mono">PnL (ROE %)</th>
                 <th className="py-3 px-2 text-center">Acciones</th>
               </tr>
@@ -133,10 +134,15 @@ export default function PositionsList({ positions, onRefreshPositions, isLoading
                     </td>
                     <td className="py-3.5 px-2 text-right font-mono">{contracts.toFixed(3)}</td>
                     <td className="py-3.5 px-2 text-right font-mono">${entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="py-3.5 px-2 text-right font-mono text-rose-400/90">{pos.stopLoss ? `$${pos.stopLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}</td>
-                    <td className="py-3.5 px-2 text-right font-mono text-emerald-400/90">{pos.takeProfit ? `$${pos.takeProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}</td>
+                    <td className="py-3.5 px-2 text-right font-mono">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/10 text-blue-300 border border-blue-500/20">
+                        {pos.leverage ? `${pos.leverage}x` : '-'}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-2 text-right font-mono text-slate-200">${margin.toFixed(2)}</td>
+                    <td className="py-3.5 px-2 text-right font-mono text-rose-400/90">{pos.stopLoss ? `$${Number(pos.stopLoss).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}</td>
+                    <td className="py-3.5 px-2 text-right font-mono text-emerald-400/90">{pos.takeProfit ? `$${Number(pos.takeProfit).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}</td>
                     <td className="py-3.5 px-2 text-right font-mono text-slate-400">${markPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="py-3.5 px-2 text-right font-mono text-slate-400">${margin.toFixed(2)}</td>
                     <td className={`py-3.5 px-2 text-right font-mono font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                       {pnl >= 0 ? '+' : ''}
                       {pnl.toFixed(2)} USDT ({roe >= 0 ? '+' : ''}
