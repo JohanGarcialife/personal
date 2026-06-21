@@ -56,6 +56,69 @@ let StrategyService = StrategyService_1 = class StrategyService {
             this.scheduleNextHourlyCycle();
         }, msUntilNextHour);
     }
+    async syncClosedPositions(openPositions) {
+        try {
+            this.logger.log('Iniciando sincronización de posiciones cerradas...');
+            const { data: dbOpenTrades, error: dbError } = await this.supabaseService.getClient()
+                .from('trade_logs')
+                .select('*')
+                .eq('status', 'OPEN');
+            if (dbError) {
+                this.logger.error('Error al obtener trades OPEN de Supabase:', dbError.message);
+                return;
+            }
+            if (!dbOpenTrades || dbOpenTrades.length === 0) {
+                return;
+            }
+            const openSymbols = openPositions.map((pos) => pos.symbol.split(':')[0]);
+            for (const dbTrade of dbOpenTrades) {
+                const cleanSymbol = dbTrade.symbol.split(':')[0];
+                if (openSymbols.includes(cleanSymbol)) {
+                    continue;
+                }
+                this.logger.log(`[${cleanSymbol}] Detectada posición cerrada en Binance (ID DB: ${dbTrade.id}). Sincronizando...`);
+                try {
+                    const resolvedSymbol = this.binanceService.resolveSymbol(dbTrade.symbol);
+                    const binanceTrades = await this.binanceService.getClient().fetchMyTrades(resolvedSymbol, undefined, 20);
+                    const tradeCreatedAt = new Date(dbTrade.created_at).getTime();
+                    const closingTrades = binanceTrades.filter((t) => {
+                        const tTime = t.timestamp || 0;
+                        const pnl = parseFloat(t.info?.realizedPnl || '0');
+                        return tTime >= (tradeCreatedAt - 60000) && pnl !== 0;
+                    });
+                    if (closingTrades.length > 0) {
+                        let totalPnL = 0;
+                        let lastClosedAt = null;
+                        for (const ct of closingTrades) {
+                            totalPnL += parseFloat(ct.info?.realizedPnl || '0');
+                            const ctTime = ct.timestamp || 0;
+                            if (!lastClosedAt || ctTime > lastClosedAt) {
+                                lastClosedAt = ctTime;
+                            }
+                        }
+                        await this.supabaseService.logTradeClose(dbTrade.id, totalPnL, undefined, undefined, 'LIMIT_OR_STOP_ORDER');
+                        if (lastClosedAt) {
+                            await this.supabaseService.getClient()
+                                .from('trade_logs')
+                                .update({ closed_at: new Date(lastClosedAt).toISOString() })
+                                .eq('id', dbTrade.id);
+                        }
+                        this.logger.log(`[${cleanSymbol}] Posición sincronizada como CERRADA con PNL: ${totalPnL} USDT.`);
+                    }
+                    else {
+                        await this.supabaseService.logTradeClose(dbTrade.id, 0, undefined, undefined, 'UNKNOWN_CLOSE');
+                        this.logger.log(`[${cleanSymbol}] Posición cerrada sin trades de PNL encontrados en Binance. Marcada como CERRADA con PNL 0.`);
+                    }
+                }
+                catch (syncErr) {
+                    this.logger.error(`Error al sincronizar par ${cleanSymbol}:`, syncErr.stack);
+                }
+            }
+        }
+        catch (error) {
+            this.logger.error('Error general en sincronización de posiciones cerradas:', error.stack);
+        }
+    }
     async executeCycle() {
         this.logger.log('--- Iniciando Ciclo de Trading Automatizado ---');
         const settings = await this.supabaseService.getSettings();
@@ -81,6 +144,7 @@ let StrategyService = StrategyService_1 = class StrategyService {
         try {
             openPositions = await this.binanceService.getOpenPositions();
             this.logger.log(`Posiciones abiertas actuales: ${openPositions.length}`);
+            await this.syncClosedPositions(openPositions);
         }
         catch (error) {
             this.logger.error('Error al obtener posiciones abiertas. Cancelando ciclo.', error.stack);

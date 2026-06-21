@@ -10,7 +10,7 @@ export declare class BinanceService implements OnModuleInit {
     constructor(configService: ConfigService, supabaseService: SupabaseService);
     onModuleInit(): void;
     getClient(): ccxt.binanceusdm;
-    private resolveSymbol;
+    resolveSymbol(symbol: string): string;
     getBalance(): Promise<{
         total: number;
         free: number;

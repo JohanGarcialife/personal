@@ -47,7 +47,7 @@ export class BinanceService implements OnModuleInit {
   /**
    * Normaliza un símbolo estándar (ej: BTC/USDT) al formato requerido por CCXT en Binance Futures (ej: BTC/USDT:USDT)
    */
-  private resolveSymbol(symbol: string): string {
+  resolveSymbol(symbol: string): string {
     if (symbol && !symbol.includes(':') && symbol.endsWith('/USDT')) {
       return `${symbol}:USDT`;
     }
