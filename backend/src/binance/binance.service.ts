@@ -221,7 +221,16 @@ export class BinanceService implements OnModuleInit {
         const entryPrice = parseFloat(pos.entryPrice?.toString() || (pos as any).info?.entryPrice || '0');
         const markPrice = parseFloat(pos.markPrice?.toString() || (pos as any).info?.markPrice || '0');
         const initialMargin = parseFloat(pos.initialMargin?.toString() || (pos as any).info?.initialMargin || '0');
-        const leverage = parseFloat(pos.leverage?.toString() || (pos as any).info?.leverage || '1');
+        
+        // Calcular apalancamiento a partir del margen inicial si no viene en el objeto pos
+        let leverage = parseFloat(pos.leverage?.toString() || (pos as any).info?.leverage || '0');
+        if (!leverage && pos.initialMarginPercentage) {
+          leverage = Math.round(1 / pos.initialMarginPercentage);
+        }
+        if (!leverage) {
+          leverage = 1;
+        }
+
         const cleanSymbol = pos.symbol.split(':')[0];
 
         const entry: any = {
@@ -238,11 +247,11 @@ export class BinanceService implements OnModuleInit {
           takeProfit: null,
         };
 
-        // Enriquecer con SL/TP almacenados en Supabase
+        // Enriquecer con SL/TP y apalancamiento almacenados en Supabase
         try {
           const { data: activeTrade } = await this.supabaseService.getClient()
             .from('trade_logs')
-            .select('stop_loss, take_profit')
+            .select('stop_loss, take_profit, leverage')
             .eq('symbol', cleanSymbol)
             .eq('status', 'OPEN')
             .order('created_at', { ascending: false })
@@ -251,6 +260,9 @@ export class BinanceService implements OnModuleInit {
           if (activeTrade && activeTrade.length > 0) {
             entry.stopLoss = activeTrade[0].stop_loss;
             entry.takeProfit = activeTrade[0].take_profit;
+            if (activeTrade[0].leverage) {
+              entry.leverage = activeTrade[0].leverage;
+            }
           }
         } catch (dbErr) {
           this.logger.warn(`No se pudo enriquecer posición ${pos.symbol} con SL/TP: ${dbErr.message}`);
