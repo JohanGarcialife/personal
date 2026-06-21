@@ -19,13 +19,6 @@ export class StrategyService implements OnModuleInit {
 
   onModuleInit() {
     this.logger.log('Inicializando ciclo de ejecución automatizado de la Estrategia...');
-    
-    // Ejecutar un ciclo inicial a los 10 segundos del arranque
-    setTimeout(() => {
-      this.executeCycle().catch((err) => {
-        this.logger.error('Error durante la ejecución del ciclo inicial de estrategia', err.stack);
-      });
-    }, 10000);
 
     // Programar el ciclo periódico al inicio de la siguiente hora
     this.scheduleNextHourlyCycle();
