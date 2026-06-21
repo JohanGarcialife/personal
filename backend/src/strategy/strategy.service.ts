@@ -116,18 +116,6 @@ export class StrategyService implements OnModuleInit {
       try {
         this.logger.log(`[${symbol}] Analizando par...`);
 
-        // Comprobar si ya existe una posición abierta para este par
-        const hasPosition = openPositions.some((pos) => {
-          const posSymbol = pos.symbol;
-          // Compara símbolos normalizados (ej: BTC/USDT:USDT vs BTC/USDT)
-          return posSymbol === symbol || posSymbol.startsWith(symbol + ':');
-        });
-
-        if (hasPosition) {
-          this.logger.log(`[${symbol}] Ya existe una posición abierta. Omitiendo nueva entrada.`);
-          continue;
-        }
-
         // Obtener velas (klines) - 50 velas de 1 hora
         const klines = await this.binanceService.getKlines(symbol, '1h', 50);
         if (klines.length < 30) {
@@ -170,7 +158,7 @@ export class StrategyService implements OnModuleInit {
           },
         };
 
-        // 5. Formar el contexto técnico para Gemini
+        // 5. Formar el contexto técnico básico para Gemini
         const recentKlinesData = klines.slice(-5).map((k) => [
           k[0] ?? 0, // timestamp
           parseFloat(k[1]?.toString() || '0'), // open
@@ -185,12 +173,133 @@ export class StrategyService implements OnModuleInit {
           balance: balance.total,
           indicators,
           recentKlines: recentKlinesData,
+          openPosition: undefined as any
         };
 
-        // 6. Consultar decisión de la IA (Gemini 3.5 Flash)
+        // Comprobar si ya existe una posición abierta para este par en Binance
+        const openPosition = openPositions.find((pos) => {
+          const posSymbol = pos.symbol;
+          return posSymbol === symbol || posSymbol.startsWith(symbol + ':');
+        });
+
         const startTime = Date.now();
-        this.logger.log(`[${symbol}] Enviando análisis técnico a Gemini...`);
-        
+
+        if (openPosition) {
+          this.logger.log(`[${symbol}] Ya existe una posición abierta. Analizando gestión de posición por IA...`);
+
+          // Obtener el registro de trade activo desde la DB para conocer SL/TP originales
+          const cleanSymbol = symbol.split(':')[0];
+          let activeTrade: any = null;
+          try {
+            const { data } = await this.supabaseService.getClient()
+              .from('trade_logs')
+              .select('*')
+              .eq('symbol', cleanSymbol)
+              .eq('status', 'OPEN')
+              .order('created_at', { ascending: false })
+              .limit(1);
+
+            if (data && data.length > 0) {
+              activeTrade = data[0];
+            }
+          } catch (dbErr) {
+            this.logger.warn(`No se pudo obtener el trade activo de Supabase: ${dbErr.message}`);
+          }
+
+          // Enriquecer el contexto con la posición actual
+          marketContext.openPosition = {
+            side: openPosition.side,
+            entryPrice: openPosition.entryPrice,
+            markPrice: openPosition.markPrice,
+            contracts: openPosition.contracts,
+            stopLoss: activeTrade ? activeTrade.stop_loss : null,
+            takeProfit: activeTrade ? activeTrade.take_profit : null,
+          };
+
+          this.logger.log(`[${symbol}] Enviando análisis de posición activa a Gemini...`);
+          const iaResponse = await this.geminiService.analyzeMarket(symbol, marketContext, promptMaster);
+          const latency = Date.now() - startTime;
+
+          // Registrar la decisión de gestión en Supabase
+          await this.supabaseService.logGeminiDecision(
+            symbol,
+            marketContext,
+            iaResponse.decision,
+            iaResponse,
+            latency,
+          );
+
+          if (iaResponse.decision === 'CLOSE_POSITION') {
+            this.logger.log(`[${symbol}] La IA decidió CERRAR la posición. Ejecutando cierre...`);
+            await this.binanceService.closeMarketPosition(symbol, 'AI_CLOSE');
+          } else if (activeTrade && iaResponse.decision === 'HOLD') {
+            // Analizar trailing stop loss o take profit propuesto
+            const currentSL = activeTrade.stop_loss;
+            const currentTP = activeTrade.take_profit;
+            const proposedSL = iaResponse.stopLoss;
+            const proposedTP = iaResponse.takeProfit;
+
+            const isLong = (openPosition.side || '').toLowerCase() === 'long';
+            let shouldUpdate = false;
+            let updateReason = '';
+
+            // Validar trailing stop (debe ir en dirección favorable del trade)
+            if (proposedSL && proposedSL !== currentSL) {
+              if (isLong && proposedSL > currentSL && proposedSL < openPosition.markPrice) {
+                shouldUpdate = true;
+                updateReason += `Subir SL de ${currentSL} a ${proposedSL} (Trailing). `;
+              }
+              if (!isLong && proposedSL < currentSL && proposedSL > openPosition.markPrice) {
+                shouldUpdate = true;
+                updateReason += `Bajar SL de ${currentSL} a ${proposedSL} (Trailing). `;
+              }
+            }
+
+            // Validar TP ajustado
+            if (proposedTP && proposedTP !== currentTP) {
+              if (isLong && proposedTP > openPosition.entryPrice) {
+                shouldUpdate = true;
+                updateReason += `Ajustar TP de ${currentTP} a ${proposedTP}. `;
+              }
+              if (!isLong && proposedTP < openPosition.entryPrice) {
+                shouldUpdate = true;
+                updateReason += `Ajustar TP de ${currentTP} a ${proposedTP}. `;
+              }
+            }
+
+            if (shouldUpdate) {
+              this.logger.log(`[${symbol}] Actualizando SL/TP por recomendación de IA. Razón: ${updateReason}`);
+              
+              // Cancelar órdenes anteriores y configurar nuevas
+              await this.binanceService.cancelAllOrders(symbol);
+              const side: 'buy' | 'sell' = isLong ? 'buy' : 'sell';
+              const newSL = proposedSL || currentSL;
+              const newTP = proposedTP || currentTP;
+              
+              await this.binanceService.setExitOrders(symbol, side, newSL, newTP);
+
+              // Actualizar base de datos
+              await this.supabaseService.getClient()
+                .from('trade_logs')
+                .update({
+                  stop_loss: newSL,
+                  take_profit: newTP,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', activeTrade.id);
+
+              this.logger.log(`[${symbol}] SL/TP actualizados con éxito en Binance y Base de Datos.`);
+            } else {
+              this.logger.log(`[${symbol}] Manteniendo niveles actuales de SL/TP.`);
+            }
+          }
+
+          // Continuar con el siguiente símbolo
+          continue;
+        }
+
+        // Si no hay posición, procesar análisis técnico de nueva entrada
+        this.logger.log(`[${symbol}] Enviando análisis de mercado para nueva entrada a Gemini...`);
         const iaResponse = await this.geminiService.analyzeMarket(symbol, marketContext, promptMaster);
         const latency = Date.now() - startTime;
 

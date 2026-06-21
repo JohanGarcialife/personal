@@ -5,13 +5,16 @@ import { Play, TrendingUp, TrendingDown, XCircle, RefreshCw } from 'lucide-react
 
 interface Position {
   symbol: string;
-  side: string; // 'long' o 'short'
+  cleanSymbol?: string;
+  side: string;
   contracts: number;
   entryPrice: number;
   markPrice: number;
   initialMargin: number;
-  unrealizedProfit: number;
-  percentage?: number;
+  leverage?: number;
+  unrealizedPnl: number;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
 }
 
 interface PositionsListProps {
@@ -93,6 +96,8 @@ export default function PositionsList({ positions, onRefreshPositions, isLoading
                 <th className="py-3 px-2">Tipo</th>
                 <th className="py-3 px-2 text-right">Tamaño</th>
                 <th className="py-3 px-2 text-right">Entrada</th>
+                <th className="py-3 px-2 text-right">Stop Loss (SL)</th>
+                <th className="py-3 px-2 text-right">Take Profit (TP)</th>
                 <th className="py-3 px-2 text-right">Precio Marca</th>
                 <th className="py-3 px-2 text-right">Margen</th>
                 <th className="py-3 px-2 text-right font-mono">PnL (ROE %)</th>
@@ -101,12 +106,12 @@ export default function PositionsList({ positions, onRefreshPositions, isLoading
             </thead>
             <tbody className="divide-y divide-slate-800/50">
               {positions.map((pos) => {
-                const isLong = (pos.side || '').toLowerCase() === 'long' || parseFloat((pos as any).info?.positionAmt || '0') > 0;
+                const isLong = (pos.side || '').toLowerCase() === 'long';
                 const normalizedSide = isLong ? 'LONG' : 'SHORT';
-                const pnl = pos.unrealizedProfit ?? 0;
-                const margin = pos.initialMargin || parseFloat((pos as any).info?.initialMargin || '0') || 0;
+                const pnl = pos.unrealizedPnl ?? 0;
+                const margin = pos.initialMargin || 0;
                 const roe = margin > 0 ? (pnl / margin) * 100 : 0;
-                const contracts = pos.contracts || Math.abs(parseFloat((pos as any).info?.positionAmt || '0')) || 0;
+                const contracts = pos.contracts || 0;
                 const entryPrice = pos.entryPrice || 0;
                 const markPrice = pos.markPrice || 0;
                 
@@ -128,6 +133,8 @@ export default function PositionsList({ positions, onRefreshPositions, isLoading
                     </td>
                     <td className="py-3.5 px-2 text-right font-mono">{contracts.toFixed(3)}</td>
                     <td className="py-3.5 px-2 text-right font-mono">${entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="py-3.5 px-2 text-right font-mono text-rose-400/90">{pos.stopLoss ? `$${pos.stopLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}</td>
+                    <td className="py-3.5 px-2 text-right font-mono text-emerald-400/90">{pos.takeProfit ? `$${pos.takeProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}</td>
                     <td className="py-3.5 px-2 text-right font-mono text-slate-400">${markPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                     <td className="py-3.5 px-2 text-right font-mono text-slate-400">${margin.toFixed(2)}</td>
                     <td className={`py-3.5 px-2 text-right font-mono font-bold ${pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>

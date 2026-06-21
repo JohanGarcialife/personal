@@ -194,15 +194,72 @@ export class BinanceService implements OnModuleInit {
     }
   }
 
+
   /**
-   * Obtiene las posiciones de futuros actualmente abiertas
+   * Obtiene las posiciones de futuros actualmente abiertas, las normaliza y las enriquece con SL/TP de Supabase.
+   * Devuelve objetos limpios con todos los campos necesarios para el frontend.
    */
   async getOpenPositions(): Promise<any[]> {
     try {
       const positions = await this.client.fetchPositions();
-      return positions.filter(
-        (pos) => parseFloat(pos.contracts?.toString() || '0') > 0 || parseFloat(pos.info?.positionAmt || '0') !== 0,
+      const openPositions = positions.filter(
+        (pos) => Math.abs(parseFloat(pos.info?.positionAmt || '0')) > 0,
       );
+
+      const normalized: any[] = [];
+
+      for (const pos of openPositions) {
+        // Extraer PnL no realizado: CCXT usa 'unrealizedPnl', Binance raw usa 'unrealizedProfit'
+        const unrealizedPnl =
+          parseFloat(pos.unrealizedPnl?.toString() || '0') ||
+          parseFloat((pos as any).info?.unrealizedProfit || '0') ||
+          0;
+
+        const positionAmt = parseFloat((pos as any).info?.positionAmt || '0');
+        const contracts = Math.abs(positionAmt);
+        const side = positionAmt > 0 ? 'long' : 'short';
+        const entryPrice = parseFloat(pos.entryPrice?.toString() || (pos as any).info?.entryPrice || '0');
+        const markPrice = parseFloat(pos.markPrice?.toString() || (pos as any).info?.markPrice || '0');
+        const initialMargin = parseFloat(pos.initialMargin?.toString() || (pos as any).info?.initialMargin || '0');
+        const leverage = parseFloat(pos.leverage?.toString() || (pos as any).info?.leverage || '1');
+        const cleanSymbol = pos.symbol.split(':')[0];
+
+        const entry: any = {
+          symbol: pos.symbol,
+          cleanSymbol,
+          side,
+          contracts,
+          entryPrice,
+          markPrice,
+          initialMargin,
+          leverage,
+          unrealizedPnl,
+          stopLoss: null,
+          takeProfit: null,
+        };
+
+        // Enriquecer con SL/TP almacenados en Supabase
+        try {
+          const { data: activeTrade } = await this.supabaseService.getClient()
+            .from('trade_logs')
+            .select('stop_loss, take_profit')
+            .eq('symbol', cleanSymbol)
+            .eq('status', 'OPEN')
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (activeTrade && activeTrade.length > 0) {
+            entry.stopLoss = activeTrade[0].stop_loss;
+            entry.takeProfit = activeTrade[0].take_profit;
+          }
+        } catch (dbErr) {
+          this.logger.warn(`No se pudo enriquecer posición ${pos.symbol} con SL/TP: ${dbErr.message}`);
+        }
+
+        normalized.push(entry);
+      }
+
+      return normalized;
     } catch (error) {
       this.logger.error('Error al obtener posiciones abiertas', error.stack);
       throw error;
@@ -226,10 +283,10 @@ export class BinanceService implements OnModuleInit {
   /**
    * Cierra una posición abierta mediante una orden de mercado inversa
    */
-  async closeMarketPosition(symbol: string): Promise<any> {
+  async closeMarketPosition(symbol: string, exitTrigger = 'MANUAL_CLOSE'): Promise<any> {
     const resolvedSymbol = this.resolveSymbol(symbol);
     try {
-      this.logger.log(`Solicitud de cierre de posición de mercado para ${resolvedSymbol}`);
+      this.logger.log(`Solicitud de cierre de posición de mercado para ${resolvedSymbol} (Trigger: ${exitTrigger})`);
       
       const positions = await this.client.fetchPositions();
       const pos = positions.find(
@@ -267,7 +324,7 @@ export class BinanceService implements OnModuleInit {
           .limit(1);
 
         if (openTrades && openTrades.length > 0) {
-          await this.supabaseService.logTradeClose(openTrades[0].id, 0, undefined, undefined, 'MANUAL_CLOSE');
+          await this.supabaseService.logTradeClose(openTrades[0].id, 0, undefined, undefined, exitTrigger);
         }
       } catch (dbErr) {
         this.logger.warn(`No se pudo actualizar trade_logs en Supabase: ${dbErr.message}`);

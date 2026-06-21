@@ -26,5 +26,5 @@ export declare class BinanceService implements OnModuleInit {
     }>;
     getOpenPositions(): Promise<any[]>;
     cancelAllOrders(symbol: string): Promise<any>;
-    closeMarketPosition(symbol: string): Promise<any>;
+    closeMarketPosition(symbol: string, exitTrigger?: string): Promise<any>;
 }

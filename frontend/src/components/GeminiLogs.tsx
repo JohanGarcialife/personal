@@ -18,6 +18,14 @@ interface GeminiLog {
       ema50: number;
       macd: { macd: number; signal: number; histogram: number };
     };
+    openPosition?: {
+      side: string;
+      entryPrice: number;
+      markPrice: number;
+      contracts: number;
+      stopLoss?: number | null;
+      takeProfit?: number | null;
+    };
   };
   raw_response: {
     decision: string;
@@ -160,6 +168,18 @@ export default function GeminiLogs() {
             const indicators = log.prompt_payload?.indicators;
             const reasoning = log.raw_response?.analysisReasoning;
             const confidence = log.raw_response?.confidenceScore;
+            const openPos = log.prompt_payload?.openPosition;
+
+            // Calcular PnL si hay posición abierta capturada en el análisis
+            let positionPnl: number | null = null;
+            let positionRoe: number | null = null;
+            if (openPos && openPos.markPrice && openPos.entryPrice && openPos.contracts) {
+              const isLong = (openPos.side || '').toLowerCase() === 'long';
+              const priceDiff = isLong
+                ? openPos.markPrice - openPos.entryPrice
+                : openPos.entryPrice - openPos.markPrice;
+              positionPnl = priceDiff * openPos.contracts;
+            }
             
             return (
               <div
@@ -183,6 +203,16 @@ export default function GeminiLogs() {
                     {confidence !== undefined && (
                       <span className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
                         Conf: {(confidence * 100).toFixed(0)}%
+                      </span>
+                    )}
+                    {/* Mostrar PnL estimado del análisis si había posición abierta */}
+                    {positionPnl !== null && (
+                      <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                        positionPnl >= 0
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                      }`}>
+                        PnL: {positionPnl >= 0 ? '+' : ''}{positionPnl.toFixed(2)} USDT
                       </span>
                     )}
                     <span className="text-[10px] text-slate-500 flex items-center gap-1 font-mono">
@@ -246,7 +276,63 @@ export default function GeminiLogs() {
                       </p>
                     </div>
 
-                    {/* Parámetros de Operación (si aplica) */}
+                    {/* Panel de Posición Activa (cuando había una posición abierta) */}
+                    {openPos && (
+                      <div className="bg-slate-900/60 p-2.5 rounded-lg border border-slate-700/50">
+                        <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+                          <span className={openPos.side?.toLowerCase() === 'long' ? 'text-emerald-400' : 'text-rose-400'}>
+                            ● {openPos.side?.toUpperCase()} ACTIVA
+                          </span>
+                          <span className="text-slate-600">|</span>
+                          <span>Estado al momento del análisis</span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-[11px]">
+                          <div>
+                            <span className="text-slate-500">Entrada:</span>{' '}
+                            <span className="font-bold text-slate-200">${openPos.entryPrice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-500">Precio Marca:</span>{' '}
+                            <span className="font-bold text-slate-200">${openPos.markPrice?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                          </div>
+                          <div>
+                            <span className="text-rose-500/80">SL Activo:</span>{' '}
+                            <span className="font-bold text-rose-400">{openPos.stopLoss ? `$${Number(openPos.stopLoss).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}</span>
+                          </div>
+                          <div>
+                            <span className="text-emerald-500/80">TP Activo:</span>{' '}
+                            <span className="font-bold text-emerald-400">{openPos.takeProfit ? `$${Number(openPos.takeProfit).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'}</span>
+                          </div>
+                        </div>
+                        {positionPnl !== null && (
+                          <div className={`mt-2 pt-2 border-t border-slate-800/60 font-mono text-[11px] font-bold ${
+                            positionPnl >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                          }`}>
+                            PnL estimado: {positionPnl >= 0 ? '+' : ''}{positionPnl.toFixed(4)} USDT
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* SL/TP recomendados por IA en HOLD */}
+                    {log.decision === 'HOLD' && openPos && log.raw_response && (
+                      <div className="grid grid-cols-2 gap-2 text-center">
+                        <div className="bg-rose-500/5 p-2 rounded border border-rose-500/20">
+                          <div className="text-[9px] uppercase font-bold text-rose-500/70">SL Recomendado por IA</div>
+                          <div className="font-mono text-sm font-bold text-rose-400">
+                            {log.raw_response.stopLoss ? `$${log.raw_response.stopLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : 'Sin cambio'}
+                          </div>
+                        </div>
+                        <div className="bg-emerald-500/5 p-2 rounded border border-emerald-500/20">
+                          <div className="text-[9px] uppercase font-bold text-emerald-500/70">TP Recomendado por IA</div>
+                          <div className="font-mono text-sm font-bold text-emerald-400">
+                            {log.raw_response.takeProfit ? `$${log.raw_response.takeProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}` : 'Sin cambio'}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Parámetros de Operación (nueva entrada) */}
                     {(log.decision === 'OPEN_LONG' || log.decision === 'OPEN_SHORT') && log.raw_response && (
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center pt-2 border-t border-slate-800/50">
                         <div className="bg-slate-900/40 p-2 rounded border border-slate-800/35">

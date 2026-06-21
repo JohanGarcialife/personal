@@ -11,12 +11,16 @@ import { AlertTriangle, TrendingUp, DollarSign, Activity, FileText } from 'lucid
 
 interface Position {
   symbol: string;
+  cleanSymbol?: string;
   side: string;
   contracts: number;
   entryPrice: number;
   markPrice: number;
   initialMargin: number;
-  unrealizedProfit: number;
+  leverage?: number;
+  unrealizedPnl: number;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
 }
 
 export default function Home() {
@@ -95,8 +99,8 @@ export default function Home() {
     return () => clearInterval(interval);
   }, []);
 
-  // Calculate total unrealized PnL
-  const totalUnrealizedPnL = positions.reduce((acc, pos) => acc + (pos.unrealizedProfit || 0), 0);
+  // Calculate total unrealized PnL (normalized field from backend)
+  const totalUnrealizedPnL = positions.reduce((acc, pos) => acc + (pos.unrealizedPnl ?? 0), 0);
 
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16] text-[#f1f5f9]">
