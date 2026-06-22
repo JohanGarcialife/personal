@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Settings, Save, AlertCircle, Plus } from 'lucide-react';
+import { Settings, Save, AlertCircle, Plus, X } from 'lucide-react';
 
 export default function SettingsPanel() {
   const [settingsId, setSettingsId] = useState<string | null>(null);
@@ -46,12 +46,15 @@ export default function SettingsPanel() {
           setMaxLeverage(parseInt(data.max_leverage?.toString() || '5'));
           setPromptMaster(data.prompt_master || '');
           
-          const loadedSymbols = data.allowed_symbols || [];
-          setAllowedSymbols(loadedSymbols);
+          const loadedSymbolsRaw: string[] = data.allowed_symbols || [];
+          const activeSymbols = loadedSymbolsRaw.filter((s) => !s.startsWith('-'));
+          const allSymbolsParsed = loadedSymbolsRaw.map((s) => s.startsWith('-') ? s.slice(1) : s);
+          
+          setAllowedSymbols(activeSymbols);
 
           // Combinar símbolos cargados con los disponibles por defecto
           setAvailableSymbols((prev) => {
-            return Array.from(new Set([...prev, ...loadedSymbols]));
+            return Array.from(new Set([...prev, ...allSymbolsParsed]));
           });
         }
       } catch (err) {
@@ -71,6 +74,13 @@ export default function SettingsPanel() {
     } else {
       setAllowedSymbols([...allowedSymbols, symbol]);
     }
+  };
+
+  // Eliminar un par del listado disponible
+  const handleDeleteSymbol = (symbol: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Evitar que el clic en el botón active/desactive
+    setAvailableSymbols(availableSymbols.filter((s) => s !== symbol));
+    setAllowedSymbols(allowedSymbols.filter((s) => s !== symbol));
   };
 
   // Agregar un par personalizado
@@ -100,6 +110,11 @@ export default function SettingsPanel() {
     setMessage(null);
 
     try {
+      // Mapear los símbolos disponibles: los no seleccionados se guardan con prefijo '-'
+      const symbolsToSave = availableSymbols.map((sym) => {
+        return allowedSymbols.includes(sym) ? sym : `-${sym}`;
+      });
+
       const { error } = await supabase
         .from('bot_settings')
         .update({
@@ -108,7 +123,7 @@ export default function SettingsPanel() {
           min_risk_to_reward_ratio: minRR,
           max_leverage: maxLeverage,
           prompt_master: promptMaster,
-          allowed_symbols: allowedSymbols,
+          allowed_symbols: symbolsToSave,
           updated_at: new Date().toISOString(),
         })
         .eq('id', settingsId);
@@ -233,18 +248,25 @@ export default function SettingsPanel() {
             {availableSymbols.map((symbol) => {
               const isChecked = allowedSymbols.includes(symbol);
               return (
-                <button
-                  type="button"
+                <div
                   key={symbol}
                   onClick={() => handleSymbolChange(symbol)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition border cursor-pointer ${
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-mono font-semibold transition border flex items-center gap-1.5 cursor-pointer ${
                     isChecked
                       ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/30'
                       : 'bg-slate-900/50 text-slate-500 border-slate-800 hover:border-slate-700 hover:text-slate-400'
                   }`}
                 >
-                  {symbol}
-                </button>
+                  <span>{symbol}</span>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteSymbol(symbol, e)}
+                    className="hover:bg-slate-800/80 p-0.5 rounded-full text-slate-500 hover:text-rose-400 transition cursor-pointer"
+                    title={`Eliminar ${symbol}`}
+                  >
+                    <X size={10} className="stroke-[3]" />
+                  </button>
+                </div>
               );
             })}
           </div>
