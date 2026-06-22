@@ -25,6 +25,11 @@ export default function PerformanceStats({ totalBalance }: { totalBalance: numbe
   const [chartPoints, setChartPoints] = useState<{ x: number; y: number }[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
+  // Métricas vitales
+  const [winRate, setWinRate] = useState<number>(0);
+  const [profitFactor, setProfitFactor] = useState<number>(0);
+  const [maxDrawdown, setMaxDrawdown] = useState<number>(0);
+
   const calculateStats = (trades: TradeLog[]) => {
     const now = new Date();
     const msInDay = 24 * 60 * 60 * 1000;
@@ -55,6 +60,38 @@ export default function PerformanceStats({ totalBalance }: { totalBalance: numbe
     setStats14d(filterAndSum(14));
     setStats30d(filterAndSum(30));
     setStatsAll(filterAndSum(null));
+
+    // Calcular Win Rate (en base a todos los trades)
+    const totalTrades = trades.length;
+    const wins = trades.filter((t) => (t.pnl || 0) > 0).length;
+    const wr = totalTrades > 0 ? (wins / totalTrades) * 100 : 0;
+    setWinRate(wr);
+
+    // Calcular Profit Factor
+    const grossProfit = trades.filter((t) => (t.pnl || 0) > 0).reduce((sum, t) => sum + (t.pnl || 0), 0);
+    const grossLoss = Math.abs(trades.filter((t) => (t.pnl || 0) < 0).reduce((sum, t) => sum + (t.pnl || 0), 0));
+    const pf = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? 99.9 : 0;
+    setProfitFactor(pf);
+
+    // Calcular Max Drawdown (en USDT)
+    let peak = 0;
+    let maxDD = 0;
+    let currentCumPnL = 0;
+    const sortedChronological = [...trades].sort((a, b) => {
+      return new Date(a.closed_at || 0).getTime() - new Date(b.closed_at || 0).getTime();
+    });
+
+    for (const t of sortedChronological) {
+      currentCumPnL += t.pnl || 0;
+      if (currentCumPnL > peak) {
+        peak = currentCumPnL;
+      }
+      const dd = peak - currentCumPnL;
+      if (dd > maxDD) {
+        maxDD = dd;
+      }
+    }
+    setMaxDrawdown(maxDD);
 
     // Generar datos para el gráfico de PnL Acumulado (Últimos 30 días)
     const thirtyDaysAgo = new Date(now.getTime() - 30 * msInDay);
@@ -237,7 +274,7 @@ export default function PerformanceStats({ totalBalance }: { totalBalance: numbe
             <BarChart2 size={18} className="text-yellow-500" />
             <span>Retorno de Inversión Histórico (30D)</span>
           </h2>
-          <div className="flex justify-between items-baseline bg-[#0d1321]/30 border border-slate-800/40 p-3 rounded-lg mb-4">
+          <div className="flex justify-between items-baseline bg-[#0d1321]/30 border border-slate-800/40 p-3 rounded-lg mb-3">
             <div>
               <span className="text-[10px] uppercase font-bold text-slate-500">PnL Neto Total (Todos)</span>
               <div className={`text-lg font-extrabold font-mono mt-0.5 ${
@@ -255,6 +292,30 @@ export default function PerformanceStats({ totalBalance }: { totalBalance: numbe
                 {statsAll.pct >= 0 ? '+' : ''}
                 {statsAll.pct.toFixed(2)}%
               </div>
+            </div>
+          </div>
+
+          {/* Métricas Vitales */}
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="bg-[#0d1321]/20 border border-slate-800/50 p-2 rounded-lg text-center">
+              <span className="text-[8px] uppercase font-bold text-slate-500 block tracking-wider">Win Rate</span>
+              <span className="text-xs font-bold font-mono text-slate-200 mt-0.5 block">
+                {winRate.toFixed(1)}%
+              </span>
+            </div>
+            <div className="bg-[#0d1321]/20 border border-slate-800/50 p-2 rounded-lg text-center">
+              <span className="text-[8px] uppercase font-bold text-slate-500 block tracking-wider">Profit Factor</span>
+              <span className={`text-xs font-bold font-mono mt-0.5 block ${
+                profitFactor >= 1.5 ? 'text-emerald-400' : profitFactor >= 1.0 ? 'text-slate-200' : 'text-rose-400'
+              }`}>
+                {profitFactor === 99.9 ? '∞' : profitFactor.toFixed(2)}
+              </span>
+            </div>
+            <div className="bg-[#0d1321]/20 border border-slate-800/50 p-2 rounded-lg text-center">
+              <span className="text-[8px] uppercase font-bold text-slate-500 block tracking-wider">Max Drawdown</span>
+              <span className="text-xs font-bold font-mono text-rose-400/90 mt-0.5 block">
+                -{maxDrawdown.toFixed(2)} USDT
+              </span>
             </div>
           </div>
         </div>
