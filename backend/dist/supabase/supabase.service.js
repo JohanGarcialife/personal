@@ -50,6 +50,9 @@ let SupabaseService = SupabaseService_1 = class SupabaseService {
                 this.logger.error('Error al obtener configuraciones de Supabase:', error.message);
                 return null;
             }
+            if (data && data.allowed_symbols) {
+                data.allowed_symbols = data.allowed_symbols.filter((s) => s && !s.startsWith('-'));
+            }
             return data;
         }
         catch (err) {

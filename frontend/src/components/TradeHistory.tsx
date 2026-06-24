@@ -161,10 +161,13 @@ export default function TradeHistory() {
             </thead>
             <tbody className="divide-y divide-slate-800/50">
               {trades.map((trade) => {
-                const isLong = trade.side.toLowerCase() === 'buy' || trade.side.toLowerCase() === 'long';
-                const pnl = trade.pnl || 0;
-                const entryVal = trade.entry_price * trade.amount;
-                const margin = trade.leverage > 0 ? entryVal / trade.leverage : entryVal;
+                const isLong = (trade.side || '').toLowerCase() === 'buy' || (trade.side || '').toLowerCase() === 'long';
+                const pnl = Number(trade.pnl || 0);
+                const entryPrice = Number(trade.entry_price || 0);
+                const amount = Number(trade.amount || 0);
+                const leverage = Number(trade.leverage || 1);
+                const entryVal = entryPrice * amount;
+                const margin = leverage > 0 ? entryVal / leverage : entryVal;
                 const roe = margin > 0 ? (pnl / margin) * 100 : 0;
                 
                 return (
@@ -173,7 +176,7 @@ export default function TradeHistory() {
                       {trade.closed_at ? new Date(trade.closed_at).toLocaleString() : '-'}
                     </td>
                     <td className="py-3 px-2 font-bold text-slate-200 font-mono">
-                      {trade.symbol.split(':')[0]}
+                      {trade.symbol ? trade.symbol.split(':')[0] : '-'}
                     </td>
                     <td className="py-3 px-2">
                       <span
@@ -186,12 +189,16 @@ export default function TradeHistory() {
                         {isLong ? 'LONG' : 'SHORT'}
                       </span>
                     </td>
-                    <td className="py-3 px-2 text-right font-mono">{trade.leverage}x</td>
-                    <td className="py-3 px-2 text-right font-mono">{trade.amount.toFixed(3)}</td>
-                    <td className="py-3 px-2 text-right font-mono">${trade.entry_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="py-3 px-2 text-right font-mono">{leverage}x</td>
+                    <td className="py-3 px-2 text-right font-mono">{amount.toFixed(3)}</td>
+                    <td className="py-3 px-2 text-right font-mono">${entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                     <td className="py-3 px-2 text-right font-mono text-slate-400">
-                      <div className="text-[11px]">${trade.stop_loss.toLocaleString()} (SL)</div>
-                      <div className="text-[11px] text-emerald-500/90">${trade.take_profit.toLocaleString()} (TP)</div>
+                      <div className="text-[11px]">
+                        {trade.stop_loss ? `$${Number(trade.stop_loss).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'} (SL)
+                      </div>
+                      <div className="text-[11px] text-emerald-500/90">
+                        {trade.take_profit ? `$${Number(trade.take_profit).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : '-'} (TP)
+                      </div>
                     </td>
                     <td className="py-3 px-2 text-center">
                       {getExitTriggerBadge(trade.exit_trigger)}

@@ -164,10 +164,13 @@ export class AppController {
   @Get('strategy/execute')
   async executeStrategy() {
     try {
-      await this.strategyService.executeCycle();
+      // Disparar en segundo plano para evitar timeouts HTTP de 10-30s
+      this.strategyService.executeCycle().catch((err) => {
+        // Los errores se registran dentro de executeCycle, pero añadimos catch preventivo
+      });
       return {
         success: true,
-        message: 'Ciclo de estrategia de simulación ejecutado con éxito. Revisa los logs de NestJS y Supabase para ver las órdenes.',
+        message: 'Ciclo de análisis manual iniciado en segundo plano con éxito.',
       };
     } catch (error) {
       return {

@@ -141,10 +141,11 @@ let AppController = class AppController {
     }
     async executeStrategy() {
         try {
-            await this.strategyService.executeCycle();
+            this.strategyService.executeCycle().catch((err) => {
+            });
             return {
                 success: true,
-                message: 'Ciclo de estrategia de simulación ejecutado con éxito. Revisa los logs de NestJS y Supabase para ver las órdenes.',
+                message: 'Ciclo de análisis manual iniciado en segundo plano con éxito.',
             };
         }
         catch (error) {

@@ -197,7 +197,13 @@ let BinanceService = BinanceService_1 = class BinanceService {
                 const entryPrice = parseFloat(pos.entryPrice?.toString() || pos.info?.entryPrice || '0');
                 const markPrice = parseFloat(pos.markPrice?.toString() || pos.info?.markPrice || '0');
                 const initialMargin = parseFloat(pos.initialMargin?.toString() || pos.info?.initialMargin || '0');
-                const leverage = parseFloat(pos.leverage?.toString() || pos.info?.leverage || '1');
+                let leverage = parseFloat(pos.leverage?.toString() || pos.info?.leverage || '0');
+                if (!leverage && pos.initialMarginPercentage) {
+                    leverage = Math.round(1 / pos.initialMarginPercentage);
+                }
+                if (!leverage) {
+                    leverage = 1;
+                }
                 const cleanSymbol = pos.symbol.split(':')[0];
                 const entry = {
                     symbol: pos.symbol,
@@ -215,7 +221,7 @@ let BinanceService = BinanceService_1 = class BinanceService {
                 try {
                     const { data: activeTrade } = await this.supabaseService.getClient()
                         .from('trade_logs')
-                        .select('stop_loss, take_profit')
+                        .select('stop_loss, take_profit, leverage')
                         .eq('symbol', cleanSymbol)
                         .eq('status', 'OPEN')
                         .order('created_at', { ascending: false })
@@ -223,6 +229,9 @@ let BinanceService = BinanceService_1 = class BinanceService {
                     if (activeTrade && activeTrade.length > 0) {
                         entry.stopLoss = activeTrade[0].stop_loss;
                         entry.takeProfit = activeTrade[0].take_profit;
+                        if (activeTrade[0].leverage) {
+                            entry.leverage = activeTrade[0].leverage;
+                        }
                     }
                 }
                 catch (dbErr) {
@@ -262,20 +271,76 @@ let BinanceService = BinanceService_1 = class BinanceService {
             if (amount === 0) {
                 throw new Error(`La posición para ${symbol} ya está cerrada.`);
             }
+            const estimatedPnL = parseFloat(pos.unrealizedPnl?.toString() || '0') ||
+                parseFloat(pos.info?.unrealizedProfit || '0') ||
+                0;
             const side = positionAmt > 0 ? 'sell' : 'buy';
             this.logger.log(`Cerrando posición ${positionAmt > 0 ? 'LONG' : 'SHORT'} para ${resolvedSymbol}. Cantidad: ${amount}`);
             await this.cancelAllOrders(resolvedSymbol);
             const closeOrder = await this.client.createOrder(resolvedSymbol, 'market', side, amount);
             try {
+                const cleanSymbol = symbol.split(':')[0];
                 const { data: openTrades } = await this.supabaseService.getClient()
                     .from('trade_logs')
                     .select('id')
-                    .eq('symbol', symbol)
+                    .eq('symbol', cleanSymbol)
                     .eq('status', 'OPEN')
                     .order('created_at', { ascending: false })
                     .limit(1);
+                let finalPnL = estimatedPnL;
+                try {
+                    this.logger.log(`Esperando 1 segundo para obtener trades de la orden de cierre ${closeOrder.id}...`);
+                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                    const binanceTrades = await this.client.fetchMyTrades(resolvedSymbol, undefined, 10);
+                    const matchingTrades = binanceTrades.filter((t) => t.order === closeOrder.id);
+                    if (matchingTrades.length > 0) {
+                        let tradePnLSum = 0;
+                        for (const t of matchingTrades) {
+                            tradePnLSum += parseFloat(t.info?.realizedPnl || '0');
+                        }
+                        finalPnL = tradePnLSum;
+                        this.logger.log(`PNL Real obtenido de trades de cierre: ${finalPnL} USDT`);
+                    }
+                    else {
+                        this.logger.warn(`No se encontraron trades para la orden ${closeOrder.id}. Usando PNL estimado: ${finalPnL} USDT`);
+                    }
+                }
+                catch (tradeErr) {
+                    this.logger.warn(`Error al recuperar trades de Binance para calcular PNL real: ${tradeErr.message}. Usando PNL estimado: ${finalPnL} USDT`);
+                }
                 if (openTrades && openTrades.length > 0) {
-                    await this.supabaseService.logTradeClose(openTrades[0].id, 0, undefined, undefined, exitTrigger);
+                    await this.supabaseService.logTradeClose(openTrades[0].id, finalPnL, undefined, undefined, exitTrigger);
+                    this.logger.log(`Trade ${openTrades[0].id} marcado como CERRADO con PNL: ${finalPnL} USDT (Trigger: ${exitTrigger})`);
+                }
+                else {
+                    this.logger.log(`[${cleanSymbol}] No se encontró trade OPEN en DB. Auto-registrando trade CERRADO directamente con PNL: ${finalPnL} USDT...`);
+                    const originalSide = positionAmt > 0 ? 'buy' : 'sell';
+                    const entryPrice = parseFloat(pos.entryPrice?.toString() || pos.info?.entryPrice || '0');
+                    let leverage = parseFloat(pos.leverage?.toString() || pos.info?.leverage || '0');
+                    if (!leverage && pos.initialMarginPercentage) {
+                        leverage = Math.round(1 / pos.initialMarginPercentage);
+                    }
+                    if (!leverage) {
+                        leverage = 1;
+                    }
+                    await this.supabaseService.getClient()
+                        .from('trade_logs')
+                        .insert({
+                        symbol: cleanSymbol,
+                        side: originalSide,
+                        entry_price: entryPrice,
+                        amount,
+                        leverage,
+                        stop_loss: 0,
+                        take_profit: 0,
+                        status: 'CLOSED',
+                        pnl: finalPnL,
+                        entry_order_id: 'MANUAL_ENTRY',
+                        sl_order_id: null,
+                        tp_order_id: null,
+                        closed_at: new Date().toISOString(),
+                        exit_trigger: exitTrigger
+                    });
                 }
             }
             catch (dbErr) {

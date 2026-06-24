@@ -9,6 +9,7 @@ import { RSI, EMA, MACD } from 'technicalindicators';
 export class StrategyService implements OnModuleInit {
   private readonly logger = new Logger(StrategyService.name);
   private intervalId: NodeJS.Timeout;
+  private isRunningCycle = false;
 
   constructor(
     private readonly binanceService: BinanceService,
@@ -64,6 +65,32 @@ export class StrategyService implements OnModuleInit {
     try {
       this.logger.log('Iniciando sincronización de posiciones cerradas...');
       
+      // 1. Auto-registrar posiciones activas en Binance que no estén en la base de datos como OPEN
+      const { data: initialOpenTrades } = await this.supabaseService.getClient()
+        .from('trade_logs')
+        .select('*')
+        .eq('status', 'OPEN');
+
+      const dbOpenSymbols = (initialOpenTrades || []).map((t) => t.symbol.split(':')[0]);
+
+      for (const pos of openPositions) {
+        const cleanSymbol = pos.symbol.split(':')[0];
+        if (!dbOpenSymbols.includes(cleanSymbol)) {
+          this.logger.log(`[${cleanSymbol}] Detectada posición activa en Binance sin registro OPEN en DB. Auto-registrando...`);
+          await this.supabaseService.logTradeOpen(
+            cleanSymbol,
+            pos.side,
+            pos.entryPrice,
+            pos.contracts,
+            pos.leverage,
+            pos.stopLoss || 0,
+            pos.takeProfit || 0,
+            'MANUAL_ENTRY'
+          );
+        }
+      }
+
+      // 2. Obtener lista final de trades OPEN de Supabase
       const { data: dbOpenTrades, error: dbError } = await this.supabaseService.getClient()
         .from('trade_logs')
         .select('*')
@@ -165,7 +192,14 @@ export class StrategyService implements OnModuleInit {
    * Ejecuta un ciclo completo de análisis, consulta a la IA y trading de simulación
    */
   async executeCycle(): Promise<void> {
-    this.logger.log('--- Iniciando Ciclo de Trading Automatizado ---');
+    if (this.isRunningCycle) {
+      this.logger.warn('Un ciclo de trading ya está en ejecución. Omitiendo este ciclo para evitar duplicados.');
+      return;
+    }
+
+    this.isRunningCycle = true;
+    try {
+      this.logger.log('--- Iniciando Ciclo de Trading Automatizado ---');
 
     // 1. Obtener configuraciones dinámicas desde Supabase
     const settings = await this.supabaseService.getSettings();
@@ -494,6 +528,11 @@ export class StrategyService implements OnModuleInit {
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
 
-    this.logger.log('--- Fin del Ciclo de Trading ---');
+    } catch (err) {
+      this.logger.error('Error crítico no controlado en executeCycle:', err.stack);
+    } finally {
+      this.isRunningCycle = false;
+      this.logger.log('--- Fin del Ciclo de Trading ---');
+    }
   }
 }
