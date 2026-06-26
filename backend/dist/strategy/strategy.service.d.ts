@@ -9,11 +9,9 @@ export declare class StrategyService implements OnModuleInit {
     private readonly riskService;
     private readonly supabaseService;
     private readonly logger;
-    private intervalId;
     private isRunningCycle;
     constructor(binanceService: BinanceService, geminiService: GeminiService, riskService: RiskService, supabaseService: SupabaseService);
     onModuleInit(): void;
-    private scheduleNextHourlyCycle;
     syncClosedPositions(openPositions: any[]): Promise<void>;
     executeCycle(): Promise<void>;
 }

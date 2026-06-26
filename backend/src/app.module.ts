@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { BinanceModule } from './binance/binance.module';
@@ -13,6 +14,7 @@ import { StrategyModule } from './strategy/strategy.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ScheduleModule.forRoot(),
     BinanceModule,
     GeminiModule,
     RiskModule,

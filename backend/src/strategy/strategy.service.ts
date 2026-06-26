@@ -4,11 +4,11 @@ import { GeminiService } from '../gemini/gemini.service';
 import { RiskService } from '../risk/risk.service';
 import { SupabaseService } from '../supabase/supabase.service';
 import { RSI, EMA, MACD } from 'technicalindicators';
+import { Cron, CronExpression } from '@nestjs/schedule';
 
 @Injectable()
 export class StrategyService implements OnModuleInit {
   private readonly logger = new Logger(StrategyService.name);
-  private intervalId: NodeJS.Timeout;
   private isRunningCycle = false;
 
   constructor(
@@ -19,42 +19,7 @@ export class StrategyService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    this.logger.log('Inicializando ciclo de ejecución automatizado de la Estrategia...');
-
-    // Programar el ciclo periódico al inicio de la siguiente hora
-    this.scheduleNextHourlyCycle();
-  }
-
-  /**
-   * Calcula el tiempo restante hasta la próxima hora en punto y programa el siguiente ciclo.
-   * Auto-corrige cualquier desfase temporal en cada iteración de manera recursiva.
-   */
-  private scheduleNextHourlyCycle() {
-    const now = new Date();
-    const msInHour = 3600000;
-    
-    const msPassedInCurrentHour = 
-      (now.getMinutes() * 60 * 1000) + 
-      (now.getSeconds() * 1000) + 
-      now.getMilliseconds();
-      
-    const msUntilNextHour = msInHour - msPassedInCurrentHour;
-    
-    const targetHour = (now.getHours() + 1) % 24;
-    const targetHourFormatted = targetHour.toString().padStart(2, '0');
-    
-    this.logger.log(
-      `Próximo ciclo periódico programado en ${Math.round(msUntilNextHour / 1000 / 60)} minutos (exactamente a las ${targetHourFormatted}:00:00)`
-    );
-
-    this.intervalId = setTimeout(() => {
-      this.executeCycle().catch((err) => {
-        this.logger.error('Error durante la ejecución del ciclo periódico de estrategia', err.stack);
-      });
-
-      // Programar recursivamente la siguiente hora
-      this.scheduleNextHourlyCycle();
-    }, msUntilNextHour);
+    this.logger.log('Inicializando ciclo de ejecución automatizado de la Estrategia con @Cron...');
   }
 
   /**
@@ -191,6 +156,7 @@ export class StrategyService implements OnModuleInit {
   /**
    * Ejecuta un ciclo completo de análisis, consulta a la IA y trading de simulación
    */
+  @Cron(CronExpression.EVERY_HOUR)
   async executeCycle(): Promise<void> {
     if (this.isRunningCycle) {
       this.logger.warn('Un ciclo de trading ya está en ejecución. Omitiendo este ciclo para evitar duplicados.');

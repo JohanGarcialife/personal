@@ -17,13 +17,13 @@ const gemini_service_1 = require("../gemini/gemini.service");
 const risk_service_1 = require("../risk/risk.service");
 const supabase_service_1 = require("../supabase/supabase.service");
 const technicalindicators_1 = require("technicalindicators");
+const schedule_1 = require("@nestjs/schedule");
 let StrategyService = StrategyService_1 = class StrategyService {
     binanceService;
     geminiService;
     riskService;
     supabaseService;
     logger = new common_1.Logger(StrategyService_1.name);
-    intervalId;
     isRunningCycle = false;
     constructor(binanceService, geminiService, riskService, supabaseService) {
         this.binanceService = binanceService;
@@ -32,25 +32,7 @@ let StrategyService = StrategyService_1 = class StrategyService {
         this.supabaseService = supabaseService;
     }
     onModuleInit() {
-        this.logger.log('Inicializando ciclo de ejecución automatizado de la Estrategia...');
-        this.scheduleNextHourlyCycle();
-    }
-    scheduleNextHourlyCycle() {
-        const now = new Date();
-        const msInHour = 3600000;
-        const msPassedInCurrentHour = (now.getMinutes() * 60 * 1000) +
-            (now.getSeconds() * 1000) +
-            now.getMilliseconds();
-        const msUntilNextHour = msInHour - msPassedInCurrentHour;
-        const targetHour = (now.getHours() + 1) % 24;
-        const targetHourFormatted = targetHour.toString().padStart(2, '0');
-        this.logger.log(`Próximo ciclo periódico programado en ${Math.round(msUntilNextHour / 1000 / 60)} minutos (exactamente a las ${targetHourFormatted}:00:00)`);
-        this.intervalId = setTimeout(() => {
-            this.executeCycle().catch((err) => {
-                this.logger.error('Error durante la ejecución del ciclo periódico de estrategia', err.stack);
-            });
-            this.scheduleNextHourlyCycle();
-        }, msUntilNextHour);
+        this.logger.log('Inicializando ciclo de ejecución automatizado de la Estrategia con @Cron...');
     }
     async syncClosedPositions(openPositions) {
         try {
@@ -363,6 +345,12 @@ let StrategyService = StrategyService_1 = class StrategyService {
     }
 };
 exports.StrategyService = StrategyService;
+__decorate([
+    (0, schedule_1.Cron)(schedule_1.CronExpression.EVERY_HOUR),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], StrategyService.prototype, "executeCycle", null);
 exports.StrategyService = StrategyService = StrategyService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [binance_service_1.BinanceService,
